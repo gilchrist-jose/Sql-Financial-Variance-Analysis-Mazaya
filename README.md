@@ -1,74 +1,111 @@
-# Finance Expense Variance Reporting
+# SQL Finance Expense Variance Reporting — Mazaya Retail Group
 
-**Industry:** Retail / E-Commerce  
-**Database:** PostgreSQL  
-**Scope:** Full-year (Jan–Dec 2024) actuals vs budget analysis across departments and GL accounts
+An end to end SQL analysis project simulating the finance expense variance reporting workflow for a retail and e-commerce company. Built in PostgreSQL using pgAdmin.
 
 ---
 
-## Overview
+## Business Context
 
-This project provides a robust SQL framework for Budget vs. Actual (BvA) Variance Analysis. Designed for a retail environment (Mazaya Retail Group), the system identifies financial performance trends and utilizes a dynamic "Zoom" logic to isolate departments and accounts that are over budget by 5% or more on an annual basis.
+Mazaya Retail Group operates across four business units Marketing, Store Operations, Logistics & Warehouse, and E-Commerce & Technology. The finance team tracks monthly actuals against annual budgets across nine GL accounts covering both expense and revenue lines.
 
----
+This showcases the workflow of pulling budget and actuals data from a finance system, structuring it into a relational model, and answering the key questions a CFO or finance manager would ask at month end and year end:
 
-## Business Questions Answered
-
-- How did each department perform against budget across every GL account and month?
-- Which accounts breached the acceptable variance threshold and require escalation?
-- Which months triggered the breach and when did the overspend begin?
+- Are departments spending within their approved budgets?
+- Which accounts have materially breached the acceptable variance threshold?
+- When exactly did the breach begin and which months are driving it?
 - Which departments are the worst offenders by total expense overspend?
 
 ---
 
-## Schema Design
+## Database Schema
 
-The project follows a normalized relational schema to ensure data integrity and eliminate redundancy:
+The analysis is built across four related tables:
 
-- Dimensions: departments and gl_accounts act as the single source of truth for reference data.
+| Table | Description | Rows |
+|---|---|---|
+| `departments` | Master list of 6 business units | 6 |
+| `gl_accounts` | Chart of accounts — 7 expense and 3 revenue accounts | 10 |
+| `budget` | Monthly budgeted amounts per department per GL account for 2024 | 120 |
+| `actuals` | Monthly actual amounts per department per GL account for 2024 | 120 |
 
-- Fact Tables: budget (the plan) and actuals (the reality) store transactional monthly data.
+**Relationships:**
+- `departments` → `budget` (one to many on `dept_id`)
+- `departments` → `actuals` (one to many on `dept_id`)
+- `gl_accounts` → `budget` (one to many on `account_id`)
+- `gl_accounts` → `actuals` (one to many on `account_id`)
 
-- Data Integrity: Utilizes FOREIGN KEY constraints and SERIAL primary keys to maintain relationships between tables.
-
----
-
-## Key Features
-
-### Multi-Tiered Performance Categorization
-
-The scripts handle different account behaviors automatically:
-- Expenses: Flagged as OVER BUDGET if spending exceeds the plan.
-- Revenue: Flagged as OVER TARGET if actual earnings exceed the plan.
-
-### The Dynamic "Zoom" Engine (CTE Approach)
-
-The core of the analysis is a two-table query logic using a Common Table Expression (CTE):
-- Phase 1 (Filter): The CTE aggregates the entire year of data to find the specific dept_id and account_id combinations that failed the 5% variance threshold.
-- Phase 2 (Detail): The main query performs an INNER JOIN against the CTE, effectively "zooming in" to show a month-by-month breakdown of only the problem accounts.
-
-### Real-World Seed Data
-
-The included seed data covers a full 12-month cycle (Jan–Dec 2024) and simulates realistic business scenarios:
-- Q4 Peak Season: Increased delivery and advertising costs in November and December.
-- Operational Spikes: Mid-year software subscription updates and travel fluctuations.
+**Grain:** `dept_id + account_id + month` one row per department, GL account, and period in both the budget and actuals tables. All JOINs between the two tables enforce this three-column grain to prevent cartesian products.
 
 ---
 
-## Repository Structure
+## Analysis Queries & SQL Techniques
 
-| File | Purpose |
-|---|---|
-| 01_schema_and_seed_data.sql | Table definitions, constraints, and 12 months of sample data. |
-| 02_variance_analysis.sql | The analysis engine containing monthly, annual, and dynamic zoom queries. |
-| README.md | Project documentation and usage guide. |
+### Q1 — Monthly Performance: All Accounts
+*How is each department performing against budget across all account types on a month by month basis?*
+
+Joins all four tables and calculates variance amount and percentage per department, account, and month. CASE WHEN logic is account type aware a revenue account beating budget is classified as OVER TARGET while the same positive variance on an expense account is classified as OVER BUDGET.
+
+**Techniques:** Multi table JOIN on composite grain · Calculated columns · Account type aware CASE WHEN · NULLIF for division by zero protection
+
+---
+
+### Q2 — Monthly Performance: Expense Accounts Only
+*How are expense accounts specifically tracking against budget each month?*
+
+Filters to expense accounts using WHERE before aggregation. CASE WHEN logic simplifies to two branches OVER BUDGET and UNDER BUDGET since revenue rows are excluded at the filter stage rather than handled in the classification logic.
+
+**Techniques:** WHERE for pre aggregation filtering · Simplified CASE WHEN · ORDER BY variance
 
 ---
 
-## How to Use
+### Q3 — Annual Expense Summary
+*Which expense accounts ended the year over or under budget when the full twelve months are rolled up?*
 
-- Environment: Run these scripts in a PostgreSQL compatible environment.
-- Setup: Execute 01_schema_and_seed_data.sql first to build the database and populate it with the 2024 dataset.
-- Analysis: Run 02_variance_analysis.sql to generate reports. The final query in that file will provide the "Zoom" view of high-variance accounts.
+Aggregates monthly rows to a single annual figure per department and account. Variance percentage calculated on full year totals rather than averaged monthly percentages averaging percentages is a common analytical mistake that produces incorrect results.
+
+**Techniques:** GROUP BY with multiple aggregations · SUM · ROUND · Annual variance percentage on base totals
 
 ---
+
+### Q4 — Breach Detection: Accounts Exceeding 5% Threshold
+*Which expense accounts have breached the 5% materiality threshold on an annual basis?*
+
+Filters the annual summary to surface only department and account combinations where overspend exceeds 5% of the annual budget the point at which a variance is considered material and requires a management response.
+
+**Techniques:** HAVING for post-aggregation filtering · HAVING vs WHERE distinction · ORDER BY absolute variance amount
+
+---
+
+### Q5 — Monthly Drill-Down on Breaching Accounts
+*For the accounts that breached the threshold when exactly did the overspend begin?*
+
+Uses a CTE to dynamically identify the breaching department and account combinations from the annual data, then joins the main query to that CTE to produce a month by month breakdown. The CTE JOIN acts as a dynamic filter automatically capturing any combination that breaches the threshold without hardcoding names or IDs.
+
+**Techniques:** CTE (WITH clause) · INNER JOIN as dynamic filter · HAVING inside CTE · Month level variance and percentage
+
+---
+
+## Key Findings
+
+- **Logistics & Warehouse — Delivery & Fulfilment** recorded the most severe breach — overspending by 24% in both November and December, driven by White Friday and peak season fulfilment volume
+- **Marketing — Digital Advertising** breached in Q4, reaching 19% over budget in November as campaign spend accelerated ahead of the year-end retail period
+- **E-Commerce & Technology — Software & Subscriptions** showed a mid-year step change from June onward, consistent with a new tool being added — an unbudgeted recurring cost that persisted for the remainder of the year
+- **Marketing — Travel & Entertainment** breached annually at 8.3% — modest in absolute terms but flagged by the threshold logic
+- **Online Sales Revenue** beat budget by AED 120,000 for the year — E-Commerce outperformed on the revenue line despite overspending on software costs
+- **In-Store Sales Revenue** missed target by AED 241,000 — the summer dip in June, July, and August accounts for the majority of the shortfall, consistent with Dubai's seasonal retail pattern
+
+---
+
+## Files
+
+```
+├── schema_and_seed_data.sql
+└── mazaya_finance_variance.sql
+```
+
+---
+
+## Tools Used
+
+- **PostgreSQL** — database and query execution
+- **pgAdmin 4** — query development and result validation
