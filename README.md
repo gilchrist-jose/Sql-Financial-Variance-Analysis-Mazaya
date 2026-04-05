@@ -99,8 +99,7 @@ Uses a CTE to dynamically identify the breaching department and account combinat
 ## Files
 
 ```
-├── schema_and_seed_data.sql
-└── Solution_script.sql
+└── Mazaya_SQL_script.sql
 ```
 
 ---
